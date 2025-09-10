@@ -60,21 +60,21 @@ const AddNoteModal = ({ users: usersProp }: AddNoteModalProps) => {
         from = idx + token.length;
       }
     }
-    // sort by start just to be safe
+   
     ranges.sort((a, b) => a.start - b.start);
     return ranges;
   }
 
-  // Is `pos` inside any mention? returns that range or null
+  
   function getMentionRangeAt(text: string, mentions: User[], pos: number) {
     const ranges = getMentionRanges(text, mentions);
     for (const r of ranges) {
-      if (pos > r.start && pos < r.end) return r; // strictly inside
+      if (pos > r.start && pos < r.end) return r; 
     }
     return null;
   }
 
-  // Is `pos` immediately after a mention (caret at the end)?
+ 
   function getMentionEndingAt(text: string, mentions: User[], pos: number) {
     const ranges = getMentionRanges(text, mentions);
     return ranges.find((r) => pos === r.end) || null;
@@ -93,8 +93,8 @@ const AddNoteModal = ({ users: usersProp }: AddNoteModalProps) => {
   };
 
   const fetchUsersOnce = async () => {
-    if (hasFetchedUsers.current) return; // cache guard
-    hasFetchedUsers.current = true; // mark early to avoid double calls
+    if (hasFetchedUsers.current) return; 
+    hasFetchedUsers.current = true; 
     setLoadingUsers(true);
     try {
       const res = await fetch("https://jsonplaceholder.typicode.com/users", {
@@ -110,7 +110,7 @@ const AddNoteModal = ({ users: usersProp }: AddNoteModalProps) => {
         status: "",
       }));
       setUsers(mapped);
-      // If a mention query is already open, also update the visible list
+      
       setFilteredUsers((prev) =>
         mentionQuery
           ? mapped.filter((u) =>
@@ -120,7 +120,7 @@ const AddNoteModal = ({ users: usersProp }: AddNoteModalProps) => {
       );
     } catch (err) {
       console.error("users fetch failed:", err);
-      // Fallback so UI still works
+      
       setUsers(MOCK_USERS);
       setFilteredUsers(MOCK_USERS);
     } finally {
@@ -145,7 +145,7 @@ const AddNoteModal = ({ users: usersProp }: AddNoteModalProps) => {
 
     const query = atMatch[1].trim().toLowerCase();
 
-    // If query is empty, show all users
+    
     const filtered = query
   ? users
       .filter((u) => 
@@ -155,7 +155,7 @@ const AddNoteModal = ({ users: usersProp }: AddNoteModalProps) => {
   : users.filter((u) => !mentionedUsers.some((m) => m.id === u.id)); 
 
 
-    // call the network only the first time @ is used
+    
     if (!hasFetchedUsers.current) fetchUsersOnce();
 
     setMentionQuery(query);
@@ -176,7 +176,7 @@ const AddNoteModal = ({ users: usersProp }: AddNoteModalProps) => {
     const toInsert = `@${user.name} `;
     const updated = `${beforeWithoutQuery}${toInsert}${after}`;
 
-    // to avoid duplicate mentions
+    
     setMentionedUsers((prev) => {
       if (prev.some((u) => u.id === user.id)) return prev;
       return [...prev, user];
@@ -186,7 +186,7 @@ const AddNoteModal = ({ users: usersProp }: AddNoteModalProps) => {
     setShowDropdown(false);
     setMentionQuery("");
 
-    // Restore caret right after inserted token
+    
     requestAnimationFrame(() => {
       if (textareaRef.current) {
         const pos = beforeWithoutQuery.length + toInsert.length;
@@ -216,10 +216,9 @@ const AddNoteModal = ({ users: usersProp }: AddNoteModalProps) => {
     const el = textareaRef.current;
     const pos = el?.selectionStart ?? note.length;
 
-    // 🔹 Check if caret is inside a mention
     const inside = getMentionRangeAt(note, mentionedUsers, pos);
     if (inside) {
-      // block normal typing inside token
+     
       if (e.key.length === 1 || e.key === "Enter") {
         e.preventDefault();
         requestAnimationFrame(() => {
@@ -230,7 +229,7 @@ const AddNoteModal = ({ users: usersProp }: AddNoteModalProps) => {
         return;
       }
 
-      // remove entire token if Backspace/Delete is pressed
+
       if (e.key === "Backspace" || e.key === "Delete") {
         e.preventDefault();
 
@@ -258,9 +257,9 @@ const AddNoteModal = ({ users: usersProp }: AddNoteModalProps) => {
       }
     }
 
-    // ⬇️ keep your existing Enter & Backspace logic here
+  
 
-    // ...existing Enter/Backspace logic below...
+    
     if (e.key === "Enter") {
       if (showDropdown && filteredUsers.length > 0) {
         e.preventDefault();
@@ -295,7 +294,7 @@ const AddNoteModal = ({ users: usersProp }: AddNoteModalProps) => {
     }
   };
 
-  // Global keyboard nav for dropdown (ArrowUp/Down handled here)
+  
   useEffect(() => {
     if (!showDropdown || filteredUsers.length === 0) return;
 
@@ -313,7 +312,7 @@ const AddNoteModal = ({ users: usersProp }: AddNoteModalProps) => {
     return () => document.removeEventListener("keydown", onKey);
   }, [showDropdown, filteredUsers]);
 
-  // Scroll highlighted item into view
+  
   useEffect(() => {
     if (!showDropdown) return;
     const el = itemRefs.current[highlightIndex];
@@ -359,7 +358,7 @@ const AddNoteModal = ({ users: usersProp }: AddNoteModalProps) => {
                   if (e.key === "Enter" && e.shiftKey) return;
                   handleKeyDownTextarea(e);
                 }}
-                // 🔹 NEW: Prevent typing inside mention tokens
+               
                 onBeforeInput={(e) => {
                   const el = textareaRef.current;
                   if (!el) return;
@@ -367,7 +366,7 @@ const AddNoteModal = ({ users: usersProp }: AddNoteModalProps) => {
                   const inside = getMentionRangeAt(note, mentionedUsers, pos);
                   if (inside) {
                     e.preventDefault();
-                    // snap caret to the end of the token
+                    
                     requestAnimationFrame(() => {
                       const el2 = textareaRef.current;
                       if (!el2) return;
@@ -375,7 +374,7 @@ const AddNoteModal = ({ users: usersProp }: AddNoteModalProps) => {
                     });
                   }
                 }}
-                // 🔹 NEW: Snap caret if user clicks inside a token
+                
                 onSelect={() => {
                   const el = textareaRef.current;
                   if (!el) return;
