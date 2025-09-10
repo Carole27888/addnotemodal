@@ -36,10 +36,52 @@ const AddNoteModal = ({ users: usersProp }: AddNoteModalProps) => {
   const [mentionQuery, setMentionQuery] = useState("");
   const [mentionedUsers, setMentionedUsers] = useState<User[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const hasFetchedUsers = useRef(false);
+
   const dropdownRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
 
+  
+
   const [isOpen, setIsOpen] = useState(true); 
+ // Build normalized search key for a user mention
+function mentionTokenFor(user: User) {
+  return `@${user.name}`;
+}
+
+// Return all [start, end) ranges in `text` for current mentioned users
+function getMentionRanges(text: string, mentions: User[]) {
+  const ranges: Array<{ start: number; end: number; id: string }> = [];
+  for (const u of mentions) {
+    const token = mentionTokenFor(u);
+    let from = 0;
+    while (true) {
+      const idx = text.indexOf(token, from);
+      if (idx === -1) break;
+      ranges.push({ start: idx, end: idx + token.length, id: u.id });
+      from = idx + token.length;
+    }
+  }
+  // sort by start just to be safe
+  ranges.sort((a, b) => a.start - b.start);
+  return ranges;
+}
+
+// Is `pos` inside any mention? returns that range or null
+function getMentionRangeAt(text: string, mentions: User[], pos: number) {
+  const ranges = getMentionRanges(text, mentions);
+  for (const r of ranges) {
+    if (pos > r.start && pos < r.end) return r; // strictly inside
+  }
+  return null;
+}
+
+// Is `pos` immediately after a mention (caret at the end)?
+function getMentionEndingAt(text: string, mentions: User[], pos: number) {
+  const ranges = getMentionRanges(text, mentions);
+  return ranges.find((r) => pos === r.end) || null;
+}
 
   
   useEffect(() => {
@@ -54,7 +96,38 @@ const AddNoteModal = ({ users: usersProp }: AddNoteModalProps) => {
     setFilteredUsers(users);
   };
 
-  
+  const fetchUsersOnce = async () => {
+  if (hasFetchedUsers.current) return;         // cache guard
+  hasFetchedUsers.current = true;              // mark early to avoid double calls
+  setLoadingUsers(true);
+  try {
+    const res = await fetch("https://jsonplaceholder.typicode.com/users", {
+      cache: "no-store",
+    });
+    const data = await res.json();
+    const mapped: User[] = data.map((u: any) => ({
+      id: String(u.id),
+      name: u.name,
+      email: "",
+      phoneNumber: "",
+      role: "",
+      status: "",
+    }));
+    setUsers(mapped);
+    // If a mention query is already open, also update the visible list
+    setFilteredUsers((prev) => (mentionQuery ? mapped.filter((u) =>
+      u.name.toLowerCase().includes(mentionQuery.toLowerCase())
+    ) : mapped));
+  } catch (err) {
+    console.error("users fetch failed:", err);
+    // Fallback so UI still works
+    setUsers(MOCK_USERS);
+    setFilteredUsers(MOCK_USERS);
+  } finally {
+    setLoadingUsers(false);
+  }
+};
+
   
   const handleChangeNote = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
   const value = e.target.value;
@@ -78,6 +151,8 @@ const AddNoteModal = ({ users: usersProp }: AddNoteModalProps) => {
   const filtered = query
     ? users.filter((u) => u.name.toLowerCase().includes(query))
     : users;
+// call the network only the first time @ is used
+if (!hasFetchedUsers.current) fetchUsersOnce();
 
   setMentionQuery(query);
   setFilteredUsers(filtered);
@@ -138,48 +213,88 @@ const AddNoteModal = ({ users: usersProp }: AddNoteModalProps) => {
   };
 
   const handleKeyDownTextarea = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    const el = textareaRef.current;
-    const selStart = el?.selectionStart ?? note.length;
+  const el = textareaRef.current;
+  const pos = el?.selectionStart ?? note.length;
 
-    
-    if (e.key === "Enter") {
-      if (showDropdown && filteredUsers.length > 0) {
-        
-        e.preventDefault();
-        insertMention(filteredUsers[highlightIndex]);
-        return;
-      }
-      
+  // 🔹 Check if caret is inside a mention
+  const inside = getMentionRangeAt(note, mentionedUsers, pos);
+  if (inside) {
+    // block normal typing inside token
+    if (e.key.length === 1 || e.key === "Enter") {
       e.preventDefault();
-      if (note.trim().length > 0) submitNote();
+      requestAnimationFrame(() => {
+        const el2 = textareaRef.current;
+        if (!el2) return;
+        el2.selectionStart = el2.selectionEnd = inside.end;
+      });
       return;
     }
 
-    
-    if (e.key === "Backspace") {
-      const before = note.slice(0, selStart);
-      const after = note.slice(selStart);
+    // remove entire token if Backspace/Delete is pressed
+    if (e.key === "Backspace" || e.key === "Delete") {
+      e.preventDefault();
 
-      
-      const mentionToken = before.match(/@[A-Za-z0-9_]+(?:\s[A-Za-z0-9_]+)*\s?$/);
-      if (mentionToken) {
-        e.preventDefault();
-        const newBefore = before.replace(/@[A-Za-z0-9_]+(?:\s[A-Za-z0-9_]+)*\s?$/, "");
-        const updated = `${newBefore}${after}`;
-        setNote(updated);
-        setShowDropdown(false);
-        setMentionQuery("");
+      const before = note.slice(0, inside.start).replace(/\s+$/, " ");
+      const after = note.slice(inside.end).replace(/^\s+/, " ");
+      const updated = (before + after).replace(/\s{2,}/g, " ");
+      setNote(updated);
 
-        
-        requestAnimationFrame(() => {
-          if (textareaRef.current) {
-            textareaRef.current.focus();
-            textareaRef.current.selectionStart = textareaRef.current.selectionEnd = newBefore.length;
-          }
-        });
+      const tokenText = note.slice(inside.start, inside.end);
+      const removedUser = mentionedUsers.find((u) => tokenText === `@${u.name}`);
+      if (removedUser) {
+        const stillHas = getMentionRanges(updated, [removedUser]).length > 0;
+        if (!stillHas) {
+          setMentionedUsers((prev) => prev.filter((u) => u.id !== removedUser.id));
+        }
       }
+
+      requestAnimationFrame(() => {
+        const el2 = textareaRef.current;
+        if (!el2) return;
+        const newPos = before.length;
+        el2.selectionStart = el2.selectionEnd = newPos;
+      });
+      return;
     }
-  };
+  }
+
+  // ⬇️ keep your existing Enter & Backspace logic here
+
+
+  // ...existing Enter/Backspace logic below...
+  if (e.key === "Enter") {
+    if (showDropdown && filteredUsers.length > 0) {
+      e.preventDefault();
+      insertMention(filteredUsers[highlightIndex]);
+      return;
+    }
+    e.preventDefault();
+    if (note.trim().length > 0) submitNote();
+    return;
+  }
+
+  if (e.key === "Backspace") {
+    const before = note.slice(0, pos);
+    const after = note.slice(pos);
+
+    const mentionToken = before.match(/@[A-Za-z0-9_]+(?:\s[A-Za-z0-9_]+)*\s?$/);
+    if (mentionToken) {
+      e.preventDefault();
+      const newBefore = before.replace(/@[A-Za-z0-9_]+(?:\s[A-Za-z0-9_]+)*\s?$/, "");
+      const updated = `${newBefore}${after}`;
+      setNote(updated);
+      setShowDropdown(false);
+      setMentionQuery("");
+
+      requestAnimationFrame(() => {
+        if (textareaRef.current) {
+          textareaRef.current.focus();
+          textareaRef.current.selectionStart = textareaRef.current.selectionEnd = newBefore.length;
+        }
+      });
+    }
+  }
+};
 
   // Global keyboard nav for dropdown (ArrowUp/Down handled here)
   useEffect(() => {
@@ -228,24 +343,54 @@ const AddNoteModal = ({ users: usersProp }: AddNoteModalProps) => {
               <label className="block text-sm text-gray-700 mb-2">
                 Note
               </label>
+              
               <textarea
-                ref={textareaRef}
-                className="w-full px-3 py-2 border border-blue-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-sm bg-white resize-none min-h-[40px] max-h-[200px] overflow-y-auto placeholder:text-gray-400"
-                placeholder="Add a note to this request. Mention team members with @ to notify them."
-                value={note}
-                onChange={handleChangeNote}
-                rows={1}
-                style={{ height: 'auto' }}
-                onInput={(e) => {
-                  const target = e.target as HTMLTextAreaElement;
-                  target.style.height = 'auto';
-                  target.style.height = Math.min(target.scrollHeight, 200) + 'px';
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && e.shiftKey) return;
-                  handleKeyDownTextarea(e);
-                }}
-              />
+  ref={textareaRef}
+  className="w-full px-3 py-2 border border-blue-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-sm bg-white resize-none min-h-[40px] max-h-[200px] overflow-y-auto placeholder:text-gray-400"
+  placeholder="Add a note to this request. Mention team members with @ to notify them."
+  value={note}
+  onChange={handleChangeNote}
+  rows={1}
+  style={{ height: 'auto' }}
+  onInput={(e) => {
+    const target = e.target as HTMLTextAreaElement;
+    target.style.height = 'auto';
+    target.style.height = Math.min(target.scrollHeight, 200) + 'px';
+  }}
+  onKeyDown={(e) => {
+    if (e.key === "Enter" && e.shiftKey) return;
+    handleKeyDownTextarea(e);
+  }}
+
+  // 🔹 NEW: Prevent typing inside mention tokens
+  onBeforeInput={(e) => {
+    const el = textareaRef.current;
+    if (!el) return;
+    const pos = el.selectionStart ?? 0;
+    const inside = getMentionRangeAt(note, mentionedUsers, pos);
+    if (inside) {
+      e.preventDefault();
+      // snap caret to the end of the token
+      requestAnimationFrame(() => {
+        const el2 = textareaRef.current;
+        if (!el2) return;
+        el2.selectionStart = el2.selectionEnd = inside.end;
+      });
+    }
+  }}
+
+  // 🔹 NEW: Snap caret if user clicks inside a token
+  onSelect={() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    const pos = el.selectionStart ?? 0;
+    const inside = getMentionRangeAt(note, mentionedUsers, pos);
+    if (inside) {
+      el.selectionStart = el.selectionEnd = inside.end;
+    }
+  }}
+/>
+
 
               {/* Dropdown for mentions */}
               {showDropdown && (
@@ -256,28 +401,34 @@ const AddNoteModal = ({ users: usersProp }: AddNoteModalProps) => {
     className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-300 rounded shadow-lg z-10 max-h-48 overflow-y-auto"
   >
 
-                  {filteredUsers.length === 0 ? (
-                    <div className="p-2 text-sm text-gray-500">No users found</div>
-                  ) : (
-                    filteredUsers.map((user, i) => (
-                      <div
-  key={user.id}
-  ref={(el) => (itemRefs.current[i] = el)}
-  role="option"
-  aria-selected={i === highlightIndex}
-  className={`p-2 text-sm cursor-pointer ${
-    i === highlightIndex
-      ? "bg-blue-600 text-white font-medium ring-1 ring-blue-700"
-      : "hover:bg-gray-100"
-  }`}
-  onMouseEnter={() => setHighlightIndex(i)}
-  onClick={() => insertMention(user)}
->
+                  {loadingUsers ? (
+  <div className="p-2 space-y-1">
+    {Array.from({ length: 5 }).map((_, i) => (
+      <div key={i} className="h-6 rounded bg-gray-100 animate-pulse" />
+    ))}
+  </div>
+) : filteredUsers.length === 0 ? (
+  <div className="p-2 text-sm text-gray-500">No users found</div>
+) : (
+  filteredUsers.map((user, i) => (
+    <div
+      key={user.id}
+      className={`p-2 text-sm cursor-pointer ${
+        i === highlightIndex
+          ? "bg-blue-600 text-white font-medium ring-1 ring-blue-700"
+          : "hover:bg-gray-100"
+      }`}
+      onMouseEnter={() => setHighlightIndex(i)}
+      onClick={() => insertMention(user)}
+      role="option"
+      aria-selected={i === highlightIndex}
+      ref={(el) => (itemRefs.current[i] = el)}
+    >
+      {user.name}
+    </div>
+  ))
+)}
 
-                        {user.name}
-                      </div>
-                    ))
-                  )}
                 </div>
               )}
             </div>
