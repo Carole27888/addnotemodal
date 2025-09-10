@@ -36,6 +36,9 @@ const AddNoteModal = ({ users: usersProp }: AddNoteModalProps) => {
   const [mentionQuery, setMentionQuery] = useState("");
   const [mentionedUsers, setMentionedUsers] = useState<User[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
+
   const [isOpen, setIsOpen] = useState(true); 
 
   
@@ -196,6 +199,13 @@ const AddNoteModal = ({ users: usersProp }: AddNoteModalProps) => {
     return () => document.removeEventListener("keydown", onKey);
   }, [showDropdown, filteredUsers]);
 
+  // Scroll highlighted item into view
+  useEffect(() => {
+    if (!showDropdown) return;
+    const el = itemRefs.current[highlightIndex];
+    el?.scrollIntoView({ block: "nearest" });
+  }, [highlightIndex, showDropdown]);
+
 
   return (
     isOpen ? (
@@ -239,21 +249,31 @@ const AddNoteModal = ({ users: usersProp }: AddNoteModalProps) => {
 
               {/* Dropdown for mentions */}
               {showDropdown && (
-                <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-300 rounded shadow-lg z-10 max-h-48 overflow-y-auto">
+  <div
+    ref={dropdownRef}
+    role="listbox"
+    aria-label="Mention results"
+    className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-300 rounded shadow-lg z-10 max-h-48 overflow-y-auto"
+  >
+
                   {filteredUsers.length === 0 ? (
                     <div className="p-2 text-sm text-gray-500">No users found</div>
                   ) : (
                     filteredUsers.map((user, i) => (
                       <div
-                        key={user.id}
-                        className={`p-2 text-sm cursor-pointer ${
-                          i === highlightIndex
-                            ? "bg-blue-500 text-white"
-                            : "hover:bg-gray-100"
-                        }`}
-                        onMouseEnter={() => setHighlightIndex(i)}
-                        onClick={() => insertMention(user)}
-                      >
+  key={user.id}
+  ref={(el) => (itemRefs.current[i] = el)}
+  role="option"
+  aria-selected={i === highlightIndex}
+  className={`p-2 text-sm cursor-pointer ${
+    i === highlightIndex
+      ? "bg-blue-600 text-white font-medium ring-1 ring-blue-700"
+      : "hover:bg-gray-100"
+  }`}
+  onMouseEnter={() => setHighlightIndex(i)}
+  onClick={() => insertMention(user)}
+>
+
                         {user.name}
                       </div>
                     ))
